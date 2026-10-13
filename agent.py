@@ -51,25 +51,29 @@ def fetch_page_text(url, max_chars=2500):
 def llm(prompt, system="You are a helpful research assistant. Answer concisely and cite sources."):
     if not AGENTROUTER_KEY:
         return "[AGENTROUTER_API_KEY not configured]"
-    headers = dict(AR_HEADERS)
-    headers["Authorization"] = f"Bearer {AGENTROUTER_KEY}"
+    import subprocess
     last_err = None
+    payload = json.dumps({
+        "messages": [{"role": "system", "content": system},
+                     {"role": "user", "content": prompt}],
+        "temperature": 0.3, "max_tokens": 1000})
     for model in MODELS:
+        data = json.dumps({"model": model, **json.loads(payload)}).encode()
         for attempt in range(2):
-            data = json.dumps({
-                "model": model,
-                "messages": [{"role": "system", "content": system},
-                             {"role": "user", "content": prompt}],
-                "temperature": 0.3, "max_tokens": 1000}).encode()
-            req = urllib.request.Request(f"{BASE}/chat/completions", data=data, headers=headers)
             try:
-                with urllib.request.urlopen(req, timeout=120) as r:
-                    status = r.status
-                    body = r.read().decode(errors="ignore").strip()
-                if status != 200:
-                    raise ValueError(f"HTTP {status}: {body[:200]}")
+                cmd = ["curl", "-s", "-m", "120", "-X", "POST",
+                       f"{BASE}/chat/completions",
+                       "-H", f"Authorization: Bearer {AGENTROUTER_KEY}",
+                       "-H", "Content-Type: application/json",
+                       "-H", "Accept: application/json",
+                       "-H", "Originator: codex_cli_rs",
+                       "-H", "Version: 0.101.0",
+                       "-H", "User-Agent: codex_cli_rs/0.101.0 (Mac OS 26.0.1; arm64) Apple_Terminal/464",
+                       "-d", "@-"]
+                p = subprocess.run(cmd, input=data, capture_output=True, timeout=130)
+                body = p.stdout.decode(errors="ignore").strip()
                 if not body:
-                    raise ValueError("empty response body (HTTP 200)")
+                    raise ValueError(f"empty body (stderr: {p.stderr.decode()[:100]})")
                 d = json.loads(body)
                 content = d["choices"][0]["message"]["content"]
                 if content and content.strip():
