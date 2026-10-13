@@ -1,7 +1,16 @@
-import json, urllib.request, urllib.parse, os, re, html
+import json, urllib.request, urllib.parse, os, re, html, time
 
-OPENROUTER_KEY = os.environ.get("OPENROUTER_API_KEY", "")
-MODEL = "poolside/laguna-s-2.1:free"
+AGENTROUTER_KEY = os.environ.get("AGENTROUTER_API_KEY", "")
+BASE = "https://agentrouter.org/v1"
+MODEL = "deepseek-v4-flash"
+
+AR_HEADERS = {
+    "Content-Type": "application/json",
+    "Originator": "codex_cli_rs",
+    "Version": "0.101.0",
+    "User-Agent": "codex_cli_rs/0.101.0 (Mac OS 26.0.1; arm64) Apple_Terminal/464",
+}
+
 
 def ddg_search(query, n=5):
     url = "https://lite.duckduckgo.com/lite/?" + urllib.parse.urlencode({"q": query})
@@ -12,68 +21,60 @@ def ddg_search(query, n=5):
     except Exception as e:
         return [], str(e)
     out = []
-    for m in re.finditer(r"class='result-link'[^>]*>([^<]+)</a>", page):
-        # find the href before this match
-        pass
     for m in re.finditer(r'<a rel="nofollow" href="([^"]+)" class=\'result-link\'>([^<]+)</a>', page):
         href, title = m.groups()
         if "uddg=" in href:
             href = urllib.parse.unquote(href.split("uddg=")[1].split("&")[0])
-        title = html.unescape(title).strip()[:120]
+        title = html.unescape(title).strip()[:140]
         if href.startswith("http"):
             out.append({"title": title, "url": href})
             if len(out) >= n:
                 break
     return out, None
 
-MODELS = ["poolside/laguna-s-2.1:free", "google/gemma-4-31b-it:free",
-          "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free"]
 
-def llm(prompt, system="You are a helpful research assistant."):
-    if not OPENROUTER_KEY:
-        return "[no API key configured]"
+def llm(prompt, system="You are a helpful research assistant. Answer concisely and cite sources."):
+    if not AGENTROUTER_KEY:
+        return "[AGENTROUTER_API_KEY not configured]"
+    headers = dict(AR_HEADERS)
+    headers["Authorization"] = f"Bearer {AGENTROUTER_KEY}"
     last_err = None
-    for model in MODELS:
-        for attempt in range(2):
-            data = json.dumps({
-                "model": model,
-                "messages": [{"role": "system", "content": system},
-                             {"role": "user", "content": prompt}],
-                "temperature": 0.3, "max_tokens": 800}).encode()
-            req = urllib.request.Request(
-                "https://openrouter.ai/api/v1/chat/completions", data=data,
-                headers={"Authorization": f"Bearer {OPENROUTER_KEY}",
-                         "Content-Type": "application/json",
-                         "HTTP-Referer": "https://rayyankhan.online"})
-            try:
-                with urllib.request.urlopen(req, timeout=60) as r:
-                    d = json.loads(r.read().decode())
-                return d["choices"][0]["message"]["content"]
-            except Exception as e:
-                last_err = e
-                if "429" in str(e) and attempt == 0:
-                    import time
-                    time.sleep(5)
+    for attempt in range(3):
+        data = json.dumps({
+            "model": MODEL,
+            "messages": [{"role": "system", "content": system},
+                         {"role": "user", "content": prompt}],
+            "temperature": 0.3, "max_tokens": 1000}).encode()
+        req = urllib.request.Request(f"{BASE}/chat/completions", data=data, headers=headers)
+        try:
+            with urllib.request.urlopen(req, timeout=90) as r:
+                d = json.loads(r.read().decode())
+            return d["choices"][0]["message"]["content"]
+        except Exception as e:
+            last_err = e
+            time.sleep(3 * (attempt + 1))
     return f"[LLM error: {last_err}]"
+
 
 def answer(question):
     trace = []
     results, err = ddg_search(question)
-    trace.append({"tool": "ddg_search", "query": question,
-                  "hits": len(results), "error": err})
+    trace.append({"tool": "web_search", "query": question,
+                  "results_found": len(results), "error": err})
     if not results:
-        base = llm(question)
-        return {"answer": base, "citations": [], "trace": trace,
+        return {"answer": llm(question), "citations": [], "trace": trace,
                 "note": "no search results; plain LLM fallback"}
-    ctx = "\n".join(f"[{i+1}] {r['title']} ({r['url']})" for i, r in enumerate(results))
-    prompt = (f"Question: {question}\n\nSearch results:\n{ctx}\n\n"
-        "Answer using the search results. Cite sources inline like [1], [2]. "
-        "If the results don't contain the answer, say so honestly.")
+    ctx = "\n".join(f"[{i+1}] {r['title']}\n    {r['url']}" for i, r in enumerate(results))
+    prompt = (f"Question: {question}\n\nWeb search results:\n{ctx}\n\n"
+        "Answer the question using the search results above. "
+        "Cite every factual claim inline like [1], [2] matching the numbered sources. "
+        "If the results don't contain the answer, say so honestly instead of guessing.")
     ans = llm(prompt)
-    return {"answer": ans, "citations": [r["url"] for r in results], "trace": trace}
+    return {"answer": ans, "citations": [r["url"] for r in results],
+            "sources": results, "trace": trace}
+
 
 if __name__ == "__main__":
     import sys
     q = " ".join(sys.argv[1:]) or "What is the petrol price in Pakistan today?"
-    r = answer(q)
-    print(json.dumps(r, indent=2))
+    print(json.dumps(answer(q), indent=2))
