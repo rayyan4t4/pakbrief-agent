@@ -1,14 +1,12 @@
 import json, urllib.request, urllib.parse, os, re, html, time
 
-AGENTROUTER_KEY = os.environ.get("AGENTROUTER_API_KEY", "")
-BASE = "https://agentrouter.org/v1"
-MODELS = ["deepseek-v4-flash", "claude-opus-4-8"]
+GROQ_KEY = os.environ.get("GROQ_API_KEY", "")
+BASE = "https://api.groq.com/openai/v1"
+MODEL = "openai/gpt-oss-120b"
 
-AR_HEADERS = {
+GROQ_HEADERS = {
     "Content-Type": "application/json",
-    "Originator": "codex_cli_rs",
-    "Version": "0.101.0",
-    "User-Agent": "codex_cli_rs/0.101.0 (Mac OS 26.0.1; arm64) Apple_Terminal/464",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
 }
 
 
@@ -49,39 +47,28 @@ def fetch_page_text(url, max_chars=2500):
 
 
 def llm(prompt, system="You are a helpful research assistant. Answer concisely and cite sources."):
-    if not AGENTROUTER_KEY:
-        return "[AGENTROUTER_API_KEY not configured]"
-    import subprocess
+    if not GROQ_KEY:
+        return "[GROQ_API_KEY not configured]"
+    headers = dict(GROQ_HEADERS)
+    headers["Authorization"] = f"Bearer {GROQ_KEY}"
     last_err = None
-    payload = json.dumps({
-        "messages": [{"role": "system", "content": system},
-                     {"role": "user", "content": prompt}],
-        "temperature": 0.3, "max_tokens": 1000})
-    for model in MODELS:
-        data = json.dumps({"model": model, **json.loads(payload)}).encode()
-        for attempt in range(2):
-            try:
-                cmd = ["curl", "-s", "-m", "120", "-X", "POST",
-                       f"{BASE}/chat/completions",
-                       "-H", f"Authorization: Bearer {AGENTROUTER_KEY}",
-                       "-H", "Content-Type: application/json",
-                       "-H", "Accept: application/json",
-                       "-H", "Originator: codex_cli_rs",
-                       "-H", "Version: 0.101.0",
-                       "-H", "User-Agent: codex_cli_rs/0.101.0 (Mac OS 26.0.1; arm64) Apple_Terminal/464",
-                       "-d", "@-"]
-                p = subprocess.run(cmd, input=data, capture_output=True, timeout=130)
-                body = p.stdout.decode(errors="ignore").strip()
-                if not body:
-                    raise ValueError(f"empty body (stderr: {p.stderr.decode()[:100]})")
-                d = json.loads(body)
-                content = d["choices"][0]["message"]["content"]
-                if content and content.strip():
-                    return content
-                raise ValueError("empty message content")
-            except Exception as e:
-                last_err = f"{model}: {e}"
-                time.sleep(3)
+    for attempt in range(3):
+        data = json.dumps({
+            "model": MODEL,
+            "messages": [{"role": "system", "content": system},
+                         {"role": "user", "content": prompt}],
+            "temperature": 0.3, "max_tokens": 1000}).encode()
+        req = urllib.request.Request(f"{BASE}/chat/completions", data=data, headers=headers)
+        try:
+            with urllib.request.urlopen(req, timeout=90) as r:
+                d = json.loads(r.read().decode())
+            content = d["choices"][0]["message"]["content"]
+            if content and content.strip():
+                return content
+            raise ValueError("empty message content")
+        except Exception as e:
+            last_err = e
+            time.sleep(3 * (attempt + 1))
     return f"[LLM error: {last_err}]"
 
 
