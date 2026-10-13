@@ -33,13 +33,28 @@ def ddg_search(query, n=5):
     return out, None
 
 
+def fetch_page_text(url, max_chars=2500):
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=12) as r:
+            raw = r.read().decode("utf-8", errors="ignore")
+        text = re.sub(r"<script.*?</script>", " ", raw, flags=re.S | re.I)
+        text = re.sub(r"<style.*?</style>", " ", text, flags=re.S | re.I)
+        text = re.sub(r"<[^>]+>", " ", text)
+        text = html.unescape(text)
+        text = re.sub(r"\s+", " ", text).strip()
+        return text[:max_chars]
+    except Exception:
+        return ""
+
+
 def llm(prompt, system="You are a helpful research assistant. Answer concisely and cite sources."):
     if not AGENTROUTER_KEY:
         return "[AGENTROUTER_API_KEY not configured]"
     headers = dict(AR_HEADERS)
     headers["Authorization"] = f"Bearer {AGENTROUTER_KEY}"
     last_err = None
-    for attempt in range(3):
+    for attempt in range(4):
         data = json.dumps({
             "model": MODEL,
             "messages": [{"role": "system", "content": system},
@@ -48,11 +63,17 @@ def llm(prompt, system="You are a helpful research assistant. Answer concisely a
         req = urllib.request.Request(f"{BASE}/chat/completions", data=data, headers=headers)
         try:
             with urllib.request.urlopen(req, timeout=90) as r:
-                d = json.loads(r.read().decode())
-            return d["choices"][0]["message"]["content"]
+                body = r.read().decode().strip()
+            if not body:
+                raise ValueError("empty response body")
+            d = json.loads(body)
+            content = d["choices"][0]["message"]["content"]
+            if content and content.strip():
+                return content
+            raise ValueError("empty message content")
         except Exception as e:
             last_err = e
-            time.sleep(3 * (attempt + 1))
+            time.sleep(4 * (attempt + 1))
     return f"[LLM error: {last_err}]"
 
 
@@ -64,10 +85,17 @@ def answer(question):
     if not results:
         return {"answer": llm(question), "citations": [], "trace": trace,
                 "note": "no search results; plain LLM fallback"}
-    ctx = "\n".join(f"[{i+1}] {r['title']}\n    {r['url']}" for i, r in enumerate(results))
-    prompt = (f"Question: {question}\n\nWeb search results:\n{ctx}\n\n"
+    for r in results[:3]:
+        r["snippet"] = fetch_page_text(r["url"])
+        trace.append({"tool": "read_page", "url": r["url"][:60],
+                      "chars": len(r["snippet"])})
+    ctx = "\n\n".join(
+        f"[{i+1}] {r['title']}\n    {r['url']}\n    "
+        f"{r.get('snippet', '')[:1200]}" for i, r in enumerate(results))
+    prompt = (f"Question: {question}\n\nWeb search results (with page content):\n{ctx}\n\n"
         "Answer the question using the search results above. "
         "Cite every factual claim inline like [1], [2] matching the numbered sources. "
+        "Give specific numbers, dates, and names when the sources contain them. "
         "If the results don't contain the answer, say so honestly instead of guessing.")
     ans = llm(prompt)
     return {"answer": ans, "citations": [r["url"] for r in results],
