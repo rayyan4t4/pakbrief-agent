@@ -1,7 +1,7 @@
 import json, urllib.request, urllib.parse, os, re, html
 
 OPENROUTER_KEY = os.environ.get("OPENROUTER_API_KEY", "")
-MODEL = "meta-llama/llama-3.3-70b-instruct:free"
+MODEL = "poolside/laguna-s-2.1:free"
 
 def ddg_search(query, n=5):
     url = "https://lite.duckduckgo.com/lite/?" + urllib.parse.urlencode({"q": query})

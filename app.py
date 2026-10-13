@@ -17,7 +17,7 @@ if st.button("Research") and q:
         for i, u in enumerate(r["citations"], 1):
             st.markdown(f"[{i}] {u}")
     with st.expander("Tool trace"):
-        st.json(r["trace"])
+        st.write(r["trace"])
 
 st.divider()
 st.caption("Built by Rayyan Khan · rayyankhan.online")
