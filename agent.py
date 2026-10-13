@@ -63,10 +63,13 @@ def llm(prompt, system="You are a helpful research assistant. Answer concisely a
                 "temperature": 0.3, "max_tokens": 1000}).encode()
             req = urllib.request.Request(f"{BASE}/chat/completions", data=data, headers=headers)
             try:
-                with urllib.request.urlopen(req, timeout=90) as r:
-                    body = r.read().decode().strip()
+                with urllib.request.urlopen(req, timeout=120) as r:
+                    status = r.status
+                    body = r.read().decode(errors="ignore").strip()
+                if status != 200:
+                    raise ValueError(f"HTTP {status}: {body[:200]}")
                 if not body:
-                    raise ValueError("empty response body")
+                    raise ValueError("empty response body (HTTP 200)")
                 d = json.loads(body)
                 content = d["choices"][0]["message"]["content"]
                 if content and content.strip():

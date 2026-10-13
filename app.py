@@ -66,11 +66,18 @@ if st.button("🔍 Research", type="primary") and q:
 
     with st.expander("🛠 Tool trace — see what the agent did"):
         for t in r["trace"]:
-            st.write(f"**Tool:** `{t['tool']}`")
-            st.write(f"**Query:** {t['query']}")
-            st.write(f"**Results found:** {t['results_found']}")
+            st.write(f"**Tool:** `{t.get('tool', '?')}`")
+            if "query" in t:
+                st.write(f"**Query:** {t['query']}")
+            if "url" in t:
+                st.write(f"**URL:** {t['url']}")
+            if "results_found" in t:
+                st.write(f"**Results found:** {t['results_found']}")
+            if "chars" in t:
+                st.write(f"**Chars read:** {t['chars']}")
             if t.get("error"):
                 st.write(f"⚠️ {t['error']}")
+            st.divider()
 
 st.markdown("<footer>Built by <b>Rayyan Khan</b> · rayyankhan.online</footer>",
             unsafe_allow_html=True)
