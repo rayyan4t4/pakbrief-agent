@@ -2,7 +2,7 @@ import json, urllib.request, urllib.parse, os, re, html, time
 
 AGENTROUTER_KEY = os.environ.get("AGENTROUTER_API_KEY", "")
 BASE = "https://agentrouter.org/v1"
-MODEL = "deepseek-v4-flash"
+MODELS = ["deepseek-v4-flash", "claude-opus-4-8"]
 
 AR_HEADERS = {
     "Content-Type": "application/json",
@@ -54,26 +54,27 @@ def llm(prompt, system="You are a helpful research assistant. Answer concisely a
     headers = dict(AR_HEADERS)
     headers["Authorization"] = f"Bearer {AGENTROUTER_KEY}"
     last_err = None
-    for attempt in range(4):
-        data = json.dumps({
-            "model": MODEL,
-            "messages": [{"role": "system", "content": system},
-                         {"role": "user", "content": prompt}],
-            "temperature": 0.3, "max_tokens": 1000}).encode()
-        req = urllib.request.Request(f"{BASE}/chat/completions", data=data, headers=headers)
-        try:
-            with urllib.request.urlopen(req, timeout=90) as r:
-                body = r.read().decode().strip()
-            if not body:
-                raise ValueError("empty response body")
-            d = json.loads(body)
-            content = d["choices"][0]["message"]["content"]
-            if content and content.strip():
-                return content
-            raise ValueError("empty message content")
-        except Exception as e:
-            last_err = e
-            time.sleep(4 * (attempt + 1))
+    for model in MODELS:
+        for attempt in range(2):
+            data = json.dumps({
+                "model": model,
+                "messages": [{"role": "system", "content": system},
+                             {"role": "user", "content": prompt}],
+                "temperature": 0.3, "max_tokens": 1000}).encode()
+            req = urllib.request.Request(f"{BASE}/chat/completions", data=data, headers=headers)
+            try:
+                with urllib.request.urlopen(req, timeout=90) as r:
+                    body = r.read().decode().strip()
+                if not body:
+                    raise ValueError("empty response body")
+                d = json.loads(body)
+                content = d["choices"][0]["message"]["content"]
+                if content and content.strip():
+                    return content
+                raise ValueError("empty message content")
+            except Exception as e:
+                last_err = f"{model}: {e}"
+                time.sleep(3)
     return f"[LLM error: {last_err}]"
 
 
