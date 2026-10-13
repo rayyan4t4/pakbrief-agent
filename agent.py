@@ -26,25 +26,35 @@ def ddg_search(query, n=5):
                 break
     return out, None
 
+MODELS = ["poolside/laguna-s-2.1:free", "google/gemma-4-31b-it:free",
+          "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free"]
+
 def llm(prompt, system="You are a helpful research assistant."):
     if not OPENROUTER_KEY:
         return "[no API key configured]"
-    data = json.dumps({
-        "model": MODEL,
-        "messages": [{"role": "system", "content": system},
-                     {"role": "user", "content": prompt}],
-        "temperature": 0.3, "max_tokens": 800}).encode()
-    req = urllib.request.Request(
-        "https://openrouter.ai/api/v1/chat/completions", data=data,
-        headers={"Authorization": f"Bearer {OPENROUTER_KEY}",
-                 "Content-Type": "application/json",
-                 "HTTP-Referer": "https://rayyankhan.online"})
-    try:
-        with urllib.request.urlopen(req, timeout=60) as r:
-            d = json.loads(r.read().decode())
-        return d["choices"][0]["message"]["content"]
-    except Exception as e:
-        return f"[LLM error: {e}]"
+    last_err = None
+    for model in MODELS:
+        for attempt in range(2):
+            data = json.dumps({
+                "model": model,
+                "messages": [{"role": "system", "content": system},
+                             {"role": "user", "content": prompt}],
+                "temperature": 0.3, "max_tokens": 800}).encode()
+            req = urllib.request.Request(
+                "https://openrouter.ai/api/v1/chat/completions", data=data,
+                headers={"Authorization": f"Bearer {OPENROUTER_KEY}",
+                         "Content-Type": "application/json",
+                         "HTTP-Referer": "https://rayyankhan.online"})
+            try:
+                with urllib.request.urlopen(req, timeout=60) as r:
+                    d = json.loads(r.read().decode())
+                return d["choices"][0]["message"]["content"]
+            except Exception as e:
+                last_err = e
+                if "429" in str(e) and attempt == 0:
+                    import time
+                    time.sleep(5)
+    return f"[LLM error: {last_err}]"
 
 def answer(question):
     trace = []
